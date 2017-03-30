@@ -13,7 +13,6 @@
 #else
 #include <windows.h>
 #include "getopt.h"
-#include "printf.h"
 #include "buildno.h"
 #endif
 
@@ -53,32 +52,35 @@ char devname[50] = "";
 unsigned int  mflag=0,eflag=0,rflag=0,sflag=0,nflag=0,kflag=0,fflag=0;
 unsigned char fdir[40];   // каталог для мультифайловой прошивки
 
+setlocale(LC_ALL, "");
+bindtextdomain("balongflash", LOCALE_DIR);
+textdomain("balongflash");
+
 // разбор командной строки
 while ((opt = getopt(argc, argv, "d:hp:mersng:kf")) != -1) {
   switch (opt) {
    case 'h': 
      
-printf("\n Утилита предназначена для прошивки модемов на чипсете Balong V7\n\n\
-%s [ключи] <имя файла для загрузки или имя каталога с файлами>\n\n\
- Допустимы следующие ключи:\n\n"
-#ifndef WIN32
-"-p <tty> - последовательный порт для общения с загрузчиком (по умолчанию /dev/ttyUSB0)\n"
+printf(_("\n Flasher tool for USB-modems on Balong V7 chipset\n\n"
+         "%s [option] <file or directory>\n\n"
+         " options:\n\n"
+         "-p <tty> - bootloader serial port%s\n"
+         "-n       - flash multiple files from directory\n"
+         "-g#      - digital signature mode (use '-gl' to list modes)\n"
+         "-m       - print firmware map and exit\n"
+         "-e       - split firmware by partitions without headers\n"
+         "-s       - split firmware by partitions with headers\n"
+         "-k       - do not reboot modem after flashing\n"
+         "-r       - reboot modem without flashing\n"
+         "-f       - ignore CRC errors in firmware file\n"
+	 "-d#      - setting firmware type (DLOAD_ID, 0.. 7), (use '-gl' to list types)\n"
+         "\n"), argv[0],
+#ifndef win32
+        _(" (default is /dev/ttyUSB0)")
 #else
-"-p # - номер последовательного порта для общения с загрузчиком (например, -p8)\n"
-"  если ключ -p не указан, производится автоопределение порта\n"
+        ""
 #endif
-"-n       - режим мультифайловой прошивки из указанного каталога\n\
--g#      - установка режима цифровой подписи\n\
-  -gl - описание параметров\n\
-  -gd - запрет автоопределения подписи\n\
--m       - вывести карту файла прошивки и завершить работу\n\
--e       - разобрать файл прошивки на разделы без заголовков\n\
--s       - разобрать файл прошивки на разделы с заголовками\n\
--k       - не перезагружать модем по окончании прошивки\n\
--r       - принудительно перезагрузить модем без прошивки разделов\n\
--f       - прошить даже при наличии ошибок CRC в исходном файле\n\
--d#      - установка типа прошивки (DLOAD_ID, 0..7), -dl - список типов\n\
-\n",argv[0]);
+);
     return 0;
 
    case 'p':
@@ -126,24 +128,24 @@ printf("\n Утилита предназначена для прошивки м�
      return -1;
   }
 }  
-printf("\n Программа для прошивки устройств на Balong-чипсете, V3.0.%i, (c) forth32, 2015, GNU GPLv3",BUILDNO);
+printf(_("\n Flasher tool for Balong-based devices, V3.0.%i, (c) forth32, 2015, GNU GPLv3"), BUILDNO);
 #ifdef WIN32
-printf("\n Порт для Windows 32bit  (c) rust3028, 2016");
+printf(_("\n Windows 32bit port (c) rust3028, 2016"));
 #endif
 printf("\n--------------------------------------------------------------------------------------------------\n");
 
 if (eflag&sflag) {
-  printf("\n Ключи -s и -e несовместимы\n");
+  printf(_("\n Options -s and -e are incompatiple\n"));
   return -1;
 }  
 
 if (kflag&rflag) {
-  printf("\n Ключи -k и -r несовместимы\n");
+  printf(_("\n Options -k and -r are incompatiple\n"));
   return -1;
 }  
 
 if (nflag&(eflag|sflag|mflag)) {
-  printf("\n Ключ -n несовместим с ключами -s, -m и -e\n");
+  printf(_("\n Option -n is not compatible with options -s, -m and -e\n"));
   return -1;
 }  
   
@@ -157,9 +159,9 @@ if ((optind>=argc)&rflag) goto sio;
 //--------------------------------------------
 if (optind>=argc) {
   if (nflag)
-    printf("\n - Не указан каталог с файлами\n");
+    printf(_("\n - Directory is missing\n"));
   else 
-    printf("\n - Не указано имя файла для загрузки, используйте ключ -h для подсказки\n");
+    printf(_("\n - Filename is missing, use -h for help\n"));
   return -1;
 }  
 
@@ -170,7 +172,7 @@ else {
   // для однофайловых операций
 in=fopen(argv[optind],"rb");
 if (in == 0) {
-  printf("\n Ошибка открытия %s",argv[optind]);
+  printf(_("\n Cannot open %s"),argv[optind]);
   return -1;
 }
 }
@@ -190,7 +192,7 @@ if (mflag) show_file_map();
 
 // выход по ошибкам CRC
 if (!fflag && errflag) {
-    printf("\n\n! Входной файл содержит ошибки - завершаем работу\n");
+    printf(_("\n\n! Errors in input file - quitting\n"));
     return -1; 
 }
 
@@ -213,7 +215,7 @@ open_port(devname);
 res=dloadversion();
 if (res == -1) return -2;
 if (res == 0) {
-  printf("\n Модем уже находится в HDLC-режиме");
+  printf(_("\n Modem is already in HDLC-mode"));
   goto hdlc;
 }
 
