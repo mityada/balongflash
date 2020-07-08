@@ -7,7 +7,6 @@
 #include <stdlib.h>
 #else
 #include <windows.h>
-#include "printf.h"
 #endif
 
 #include <zlib.h>
@@ -15,7 +14,9 @@
 #include "ptable.h"
 #include "hdlcio.h"
 #include "util.h"
+#include "signver.h"
 
+int32_t lzma_decode(uint8_t* inbuf,uint32_t fsize,uint8_t* outbuf);
 
 //******************************************************
 //*  поиск символического имени раздела по его коду
@@ -78,6 +79,8 @@ struct {
   {"WEBUI_R1",0x113},
   {"APP_R1",0x109},
   {"HIFI_R11",0x280000},
+  {"Modem_fw",0x1e0000},
+  {"Teeos",0x290000},
   {0,0}
 };
 
@@ -159,9 +162,8 @@ uint16_t hcrc,crc;
 uint16_t* crcblock;
 uint32_t crcblocksize;
 uint8_t* zbuf;
-long unsigned int zlen;
+long int zlen;
 int res;
-
 
 ptable[npart].zflag=0; 
 // читаем заголовок в структуру
@@ -185,7 +187,7 @@ hcrc=ptable[npart].hd.crc;
 ptable[npart].hd.crc=0;  // старая CRC в рассчете не учитывается
 crc=crc16((uint8_t*)&ptable[npart].hd,sizeof(struct pheader));
 if (crc != hcrc) {
-    printf("\n! Раздел %s (%02x) - ошибка контрольной суммы заголовка",ptable[npart].pname,ptable[npart].hd.code>>16);
+    printf(_("\n! Partition %s (%02x) - header checksum error"),ptable[npart].pname,ptable[npart].hd.code>>16);
     errflag=1;
 }  
 ptable[npart].hd.crc=crc;  // восстанавливаем CRC
@@ -193,18 +195,21 @@ ptable[npart].hd.crc=crc;  // восстанавливаем CRC
 // вычисляем и проверяем CRC раздела
 calc_crc16(npart);
 if (crcblocksize != crcsize(npart)) {
-    printf("\n! Раздел %s (%02x) - неправильный размер блока контрольных сумм",ptable[npart].pname,ptable[npart].hd.code>>16);
+    printf(_("\n! Partition %s (%02x) - invalid checksum block size"),ptable[npart].pname,ptable[npart].hd.code>>16);
     errflag=1;
 }    
   
 else if (memcmp(crcblock,ptable[npart].csumblock,crcblocksize) != 0) {
-    printf("\n! Раздел %s (%02x) - неправильная блочная контрольная сумма",ptable[npart].pname,ptable[npart].hd.code>>16);
+    printf(_("\n! Partition %s (%02x) - invalid checksum block"),ptable[npart].pname,ptable[npart].hd.code>>16);
     errflag=1;
 }  
   
 free(crcblock);
 
+
+ptable[npart].ztype=' ';
 // Определение zlib-сжатия
+
 
 if ((*(uint16_t*)ptable[npart].pimage) == 0xda78) {
   ptable[npart].zflag=ptable[npart].hd.psize;  // сохраняем сжатый размер 
@@ -213,8 +218,8 @@ if ((*(uint16_t*)ptable[npart].pimage) == 0xda78) {
   // распаковываем образ раздела
   res=uncompress (zbuf, &zlen, ptable[npart].pimage, ptable[npart].hd.psize);
   if (res != Z_OK) {
-    printf("\n! Ошибка распаковки раздела %s (%02x)\n",ptable[npart].pname,ptable[npart].hd.code>>16);
-    exit(0);
+    printf(_("\n! Error uncompressing partition %s (%02x)\n"),ptable[npart].pname,ptable[npart].hd.code>>16);
+    errflag=1;
   }
   // создаем новый буфер образа раздела и копируем в него рапаковынные данные
   free(ptable[npart].pimage);
@@ -225,9 +230,38 @@ if ((*(uint16_t*)ptable[npart].pimage) == 0xda78) {
   // перерассчитываем контрольные суммы
   calc_crc16(npart);
   ptable[npart].hd.crc=crc16((uint8_t*)&ptable[npart].hd,sizeof(struct pheader));
+  ptable[npart].ztype='Z';
+}
+
+// Определение lzma-сжатия
+
+if ((ptable[npart].pimage[0] == 0x5d) && (*(uint64_t*)(ptable[npart].pimage+5) == 0xffffffffffffffff)) {
+  ptable[npart].zflag=ptable[npart].hd.psize;  // сохраняем сжатый размер 
+  zlen=52428800;
+  zbuf=malloc(zlen);  // буфер в 50М
+  // распаковываем образ раздела
+  zlen=lzma_decode(ptable[npart].pimage, ptable[npart].hd.psize, zbuf);
+  if (zlen>52428800) {
+    printf("\n Превышен размер буфера\n");
+    exit(1);
+  }  
+  if (res == -1) {
+    printf("\n! Ошибка распаковки раздела %s (%02x)\n",ptable[npart].pname,ptable[npart].hd.code>>16);
+    errflag=1;
+  }
+  // создаем новый буфер образа раздела и копируем в него рапаковынные данные
+  free(ptable[npart].pimage);
+  ptable[npart].pimage=malloc(zlen);
+  memcpy(ptable[npart].pimage,zbuf,zlen);
+  ptable[npart].hd.psize=zlen;
+  free(zbuf);
+  // перерассчитываем контрольные суммы
+  calc_crc16(npart);
+  ptable[npart].hd.crc=crc16((uint8_t*)&ptable[npart].hd,sizeof(struct pheader));
+  ptable[npart].ztype='L';
 }
   
-
+  
 // продвигаем счетчик разделов
 npart++;
 
@@ -246,40 +280,64 @@ int findparts(FILE* in) {
 
 // буфер префикса BIN-файла
 uint8_t prefix[0x5c];
+int32_t signsize;
+int32_t hd_dload_id;
 
 // Маркер начала заголовка раздела	      
 const unsigned int dpattern=0xa55aaa55;
 unsigned int i;
+
 
 // поиск начала цепочки разделов в файле
 while (fread(&i,1,4,in) == 4) {
   if (i == dpattern) break;
 }
 if (feof(in)) {
-  printf("\n В файле не найдены разделы - файл не содержит образа прошивки\n");
+  printf(_("\n Unable to find partitions - file does not contain a firmware image\n"));
   exit(0);
 }  
 
 // текущая позиция в файле должна быть не ближе 0x60 от начала - размер заголовка всего файла
 if (ftell(in)<0x60) {
-    printf("\n Заголовок файла имеет неправильный размер\n");
+    printf(_("\n Invalid file header size\n"));
     exit(0);
 }    
 fseek(in,-0x60,SEEK_CUR); // отъезжаем на начало BIN-файла
 
 // вынимаем префикс
 fread(prefix,0x5c,1,in);
-printf("\n Код файла прошивки: %i (0x%x)",*((uint32_t*)&prefix[0]),*((uint32_t*)&prefix[0]));
+hd_dload_id=prefix[0];
+// если принудительно dload_id не установлен - выбираем его из заголовка
+if (dload_id == -1) dload_id=hd_dload_id;
+if (dload_id > 0xf) {
+  printf("\n Неверный код типа прошивки (dload_id) в заголовке - %x",dload_id);
+  exit(0);
+}  
+printf("\n Код файла прошивки: %x (%s)\n",hd_dload_id,fw_description(hd_dload_id));
 
 // поиск остальных разделов
 
 do {
+  printf("\r Поиск раздела # %i",npart); fflush(stdout);	
   if (fread(&i,1,4,in) != 4) break; // конец файла
   if (i != dpattern) break;         // образец не найден - конец цепочки разделов
   fseek(in,-4,SEEK_CUR);            // отъезжаем назад, на начало заголовка
   extract(in);                      // извлекаем раздел
 } while(1);
-  
+printf("\r                                 \r");
+
+// ищем цифровую подпись
+signsize=serach_sign();
+if (signsize == -1) printf("\n Цифровая подпись: не найдена");
+else {
+  printf("\n Цифровая подпись: %i байт",signsize);
+  printf("\n Хеш открытого ключа: %s",signver_hash);
+}
+if (((signsize == -1) && (dload_id>7)) ||
+    ((signsize != -1) && (dload_id<8))) 
+    printf("\n ! ВНИМАНИЕ: Наличие цифровой подписи не соответствует коду типа прошивки: %02x",dload_id);
+
+
 return npart;
 }
 
@@ -292,7 +350,7 @@ void findfiles (char* fdir) {
 char filename[200];  
 FILE* in;
   
-printf("\n Поиск файлов-образов разделов...\n\n ##   Размер      ID        Имя          Файл\n-----------------------------------------------------------------\n");
+printf(_("\n Searching for partition files...\n\n ##   Size        ID        Name         File\n-----------------------------------------------------------------\n"));
 
 for (npart=0;npart<30;npart++) {
     if (find_file(npart, fdir, filename, &ptable[npart].hd.code, &ptable[npart].hd.psize) == 0) break; // конец поиска - раздела с таким ID не нашли
@@ -303,14 +361,14 @@ for (npart=0;npart<30;npart++) {
     // распределяем память под образ раздела
     ptable[npart].pimage=malloc(ptable[npart].hd.psize);
     if (ptable[npart].pimage == 0) {
-      printf("\n! Ошибка распределения памяти, раздел #%i, размер = %i байт\n",npart,ptable[npart].hd.psize);
+      printf(_("\n! Error allocating memory, partition #%i, size = %i bytes\n"),npart,ptable[npart].hd.psize);
       exit(0);
     }
     
     // читаем образ в буфер
-    in=fopen(filename,"r");
+    in=fopen(filename,"rb");
     if (in == 0) {
-      printf("\n Ошибка открытия файла %s",filename);
+      printf(_("\n Error opening %s"),filename);
       return;
     } 
     fread(ptable[npart].pimage,ptable[npart].hd.psize,1,in);
@@ -318,7 +376,7 @@ for (npart=0;npart<30;npart++) {
       
 }
 if (npart == 0) {
- printf("\n! Не найдено ни одного файла с образом раздела в каталоге %s",fdir);
+ printf(_("\n! No partition files found in directory %s"),fdir);
  exit(0);
 } 
 }

@@ -33,6 +33,7 @@ struct ptb_t{
   uint8_t* pimage;   // образ раздела
   uint32_t offset;   // смещение в файле до начала раздела
   uint32_t zflag;     // признак сжатого раздела  
+  uint8_t ztype;    // тип сжатия
 };
 
 //******************************************************
@@ -47,3 +48,5 @@ int findparts(FILE* in);
 void  find_pname(unsigned int id,unsigned char* pname);
 void findfiles (char* fdir);
 uint32_t psize(int n);
+
+extern int dload_id;

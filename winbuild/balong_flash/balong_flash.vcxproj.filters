@@ -21,9 +21,6 @@
     <ClInclude Include="..\..\ptable.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="printf.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="getopt.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -84,6 +81,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\zlib\zutil.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\lzma\Alloc.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\lzma\LzmaDec.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
